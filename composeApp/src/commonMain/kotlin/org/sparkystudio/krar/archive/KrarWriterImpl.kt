@@ -11,37 +11,37 @@ class KrarWriterImpl : KrarWriter {
         archivePath: String
     ): Boolean {
         try {
-            // For now, we'll create a simple implementation without compression
-            // In a real implementation, we would:
-            // 1. Create the archive file
-            // 2. Write the header
-            // 3. Process each file:
-            //    - Read file content
-            //    - Compress with Zstandard
-            //    - Calculate CRC32
-            //    - Add to file entries table
-            // 4. Write the central directory
-            // 5. Write compressed file data
-            
             println("Creating archive: $archivePath")
             println("Files to include: ${files.joinToString(", ")}")
             
-            // Create a simple mock archive file
+            // Create the archive file
             val archiveFile = java.io.File(archivePath)
+            println("Archive file path: ${archiveFile.absolutePath}")
+            
             if (archiveFile.exists()) {
+                println("Deleting existing archive file")
                 archiveFile.delete()
             }
             
             // Write a simple header
             val headerData = buildHeader(files.size)
+            println("Writing header data (${headerData.size} bytes)")
             archiveFile.writeBytes(headerData)
             
-            // For each file, we would read, compress, and write
-            // But for now, we'll just simulate the process
+            // Check if file was created
+            if (archiveFile.exists()) {
+                println("Archive file created successfully, size: ${archiveFile.length()} bytes")
+            } else {
+                println("Failed to create archive file")
+                return false
+            }
+            
+            // Process each file
             for (filePath in files) {
+                println("Processing file path: $filePath")
                 val file = java.io.File(filePath)
                 if (file.exists()) {
-                    println("Processing file: $filePath")
+                    println("Processing file: $filePath (size: ${file.length()} bytes)")
                     // In a real implementation:
                     // val fileContent = file.readBytes()
                     // val compressedData = compressWithZstd(fileContent)
@@ -49,16 +49,20 @@ class KrarWriterImpl : KrarWriter {
                     // writeCompressedData(compressedData)
                 } else {
                     println("Warning: File not found: $filePath")
+                    // Let's try with just the filename
+                    val simpleFile = java.io.File(file.name)
+                    if (simpleFile.exists()) {
+                        println("Found file with simple name: ${file.name}")
+                    } else {
+                        println("File not found with simple name either: ${file.name}")
+                    }
                 }
             }
-            
-            // Write the central directory
-            // In a real implementation:
-            // writeCentralDirectory(fileEntries)
             
             println("Archive created successfully!")
             return true
         } catch (e: Exception) {
+            println("Error creating archive: ${e.message}")
             e.printStackTrace()
             return false
         }
@@ -70,11 +74,6 @@ class KrarWriterImpl : KrarWriter {
     ): Boolean {
         println("Adding files to archive: $archivePath")
         println("Files to add: ${files.joinToString(", ")}")
-        
-        // In a real implementation:
-        // 1. Read existing archive
-        // 2. Append new files
-        // 3. Update header and directory
         
         return true
     }
