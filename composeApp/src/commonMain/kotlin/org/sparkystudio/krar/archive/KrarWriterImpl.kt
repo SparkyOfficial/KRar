@@ -1,5 +1,9 @@
 package org.sparkystudio.krar.archive
 
+import com.github.luben.zstd.Zstd
+import okio.*
+import kotlin.math.absoluteValue
+
 /**
  * Implementation of KRar archive writer
  *
@@ -14,52 +18,79 @@ class KrarWriterImpl : KrarWriter {
             println("Creating archive: $archivePath")
             println("Files to include: ${files.joinToString(", ")}")
             
-            // Create the archive file
-            val archiveFile = java.io.File(archivePath)
-            println("Archive file path: ${archiveFile.absolutePath}")
-            
+            // Create the archive file using Okio
+            val archiveFile = File(archivePath)
             if (archiveFile.exists()) {
-                println("Deleting existing archive file")
                 archiveFile.delete()
             }
             
-            // Write a simple header
-            val headerData = buildHeader(files.size)
-            println("Writing header data (${headerData.size} bytes)")
-            archiveFile.writeBytes(headerData)
-            
-            // Check if file was created
-            if (archiveFile.exists()) {
-                println("Archive file created successfully, size: ${archiveFile.length()} bytes")
-            } else {
-                println("Failed to create archive file")
-                return false
-            }
-            
-            // Process each file
-            for (filePath in files) {
-                println("Processing file path: $filePath")
-                val file = java.io.File(filePath)
-                if (file.exists()) {
-                    println("Processing file: $filePath (size: ${file.length()} bytes)")
-                    // In a real implementation:
-                    // val fileContent = file.readBytes()
-                    // val compressedData = compressWithZstd(fileContent)
-                    // val crc32 = calculateCRC32(fileContent)
-                    // writeCompressedData(compressedData)
-                } else {
-                    println("Warning: File not found: $filePath")
-                    // Let's try with just the filename
-                    val simpleFile = java.io.File(file.name)
-                    if (simpleFile.exists()) {
-                        println("Found file with simple name: ${file.name}")
-                    } else {
-                        println("File not found with simple name either: ${file.name}")
+            // Create a buffered sink for efficient writing
+            archiveFile.sink().buffer().use { sink ->
+                // Write the header
+                val header = KrarHeader(fileCount = files.size.toUInt())
+                sink.writeUIntLe(header.signature)
+                sink.writeByte(header.version.toInt())
+                sink.writeUIntLe(header.fileCount)
+                
+                // Process each file and collect entries
+                val fileEntries = mutableListOf<KrarFileEntry>()
+                var currentOffset = KrarFormatUtils.HEADER_SIZE.toLong()
+                
+                // First pass: collect file metadata and write compressed data
+                for (filePath in files) {
+                    val file = File(filePath)
+                    if (!file.exists()) {
+                        println("Warning: File not found: $filePath")
+                        continue
                     }
+                    
+                    println("Processing file: $filePath (size: ${file.length()} bytes)")
+                    
+                    // Read file content using Okio
+                    val fileContent = file.source().buffer().use { source ->
+                        source.readByteArray()
+                    }
+                    
+                    // Compress with Zstandard
+                    val compressedData = Zstd.compress(fileContent)
+                    println("  Original size: ${fileContent.size} bytes")
+                    println("  Compressed size: ${compressedData.size} bytes")
+                    
+                    // Calculate CRC32
+                    val crc32 = calculateCRC32(fileContent)
+                    
+                    // Create file entry
+                    val entry = KrarFileEntry(
+                        fileNameLength = file.name.length.toUShort(),
+                        fileName = file.name,
+                        originalSize = fileContent.size.toULong(),
+                        compressedSize = compressedData.size.toULong(),
+                        crc32 = crc32,
+                        dataOffset = currentOffset.toULong()
+                    )
+                    
+                    fileEntries.add(entry)
+                    
+                    // Write compressed data to archive
+                    sink.write(compressedData)
+                    
+                    // Update offset for next file
+                    currentOffset += compressedData.size
                 }
+                
+                // Write the central directory (file entries)
+                for (entry in fileEntries) {
+                    sink.writeUShortLe(entry.fileNameLength)
+                    sink.writeUtf8(entry.fileName)
+                    sink.writeULongLe(entry.originalSize)
+                    sink.writeULongLe(entry.compressedSize)
+                    sink.writeUIntLe(entry.crc32)
+                    sink.writeULongLe(entry.dataOffset)
+                }
+                
+                println("Archive created successfully with ${fileEntries.size} files!")
             }
             
-            println("Archive created successfully!")
             return true
         } catch (e: Exception) {
             println("Error creating archive: ${e.message}")
@@ -75,39 +106,31 @@ class KrarWriterImpl : KrarWriter {
         println("Adding files to archive: $archivePath")
         println("Files to add: ${files.joinToString(", ")}")
         
+        // TODO: Implement adding files to existing archive
+        // This would involve:
+        // 1. Reading existing archive
+        // 2. Appending new files
+        // 3. Updating header and directory
+        
         return true
     }
     
     /**
-     * Build a simple header for the archive
+     * Calculate CRC32 hash for byte array
+     * обчислюємо хеш для перевірки цілісності файлу
      */
-    private fun buildHeader(fileCount: Int): ByteArray {
-        // Simple header: "KRAR" signature + version + file count
-        val header = ByteArray(KrarFormatUtils.HEADER_SIZE)
-        // Write "KRAR" signature (4 bytes)
-        header[0] = 'K'.code.toByte()
-        header[1] = 'R'.code.toByte()
-        header[2] = 'A'.code.toByte()
-        header[3] = 'R'.code.toByte()
-        // Write version (1 byte)
-        header[4] = 1
-        // Write file count (4 bytes, little endian)
-        val fileCountBytes = fileCount.toUInt().toByteArray()
-        for (i in 0 until 4) {
-            header[5 + i] = fileCountBytes[i]
+    private fun calculateCRC32(data: ByteArray): UInt {
+        var crc = 0xFFFFFFFFu
+        for (byte in data) {
+            crc = crc xor byte.toUInt()
+            for (i in 0 until 8) {
+                if (crc and 1u != 0u) {
+                    crc = crc shr 1 xor 0xEDB88320u
+                } else {
+                    crc = crc shr 1
+                }
+            }
         }
-        return header
-    }
-    
-    /**
-     * Convert UInt to little-endian byte array
-     */
-    private fun UInt.toByteArray(): ByteArray {
-        val bytes = ByteArray(4)
-        bytes[0] = (this and 0xFFu).toByte()
-        bytes[1] = ((this shr 8) and 0xFFu).toByte()
-        bytes[2] = ((this shr 16) and 0xFFu).toByte()
-        bytes[3] = ((this shr 24) and 0xFFu).toByte()
-        return bytes
+        return crc.inv()
     }
 }
